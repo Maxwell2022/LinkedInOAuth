@@ -2,8 +2,9 @@
 
 namespace Maxwell\LinkedIn;
 
-use Maxwell\OAuthClient\OAuth;
 use Maxwell\OAuthClient\AbstractOAuthClient;
+use Maxwell\LinkedIn\Exception\LinkedInException;
+
 /**
  * LinkedIn OAuth class
  */
@@ -25,7 +26,7 @@ class LinkedInOAuth extends AbstractOAuthClient
      *
      * @return string
      */
-    public function getAuthorizeURL($redirectURI = null, $scope = null, $state = null, $responseType = 'code')
+    public function getAuthorizeURL($redirectURI=null, $scope=null, $state=null, $responseType='code')
     {
         $params = array(
             'client_id' => $this->getConsumerKey(),
@@ -46,16 +47,13 @@ class LinkedInOAuth extends AbstractOAuthClient
     }
 
     /**
-     * Exchange request token and secret for an access token and
-     * secret, to sign API calls.
+     * Exchange request code for an access token
      *
-     * @param bool $oauth_verifier
-     * @return array ("oauth_token" => "the-access-token",
-     *                "oauth_token_secret" => "the-access-secret",
-     *                "user_id" => "9436992",
-     *                "screen_name" => "abraham")
+     * @param string $code
+     * @param null $redirectURI
+     * @return mixed
      */
-    public function getAccessToken($code, $redirectURI = null)
+    public function getAccessToken($code, $redirectURI=null)
     {
         $params = array(
             'code' => $code,
@@ -69,26 +67,42 @@ class LinkedInOAuth extends AbstractOAuthClient
     }
 
     /**
-     * Use this function to make calls to the LinkedIn OAuth2 API.
-     * See https://developer.linkedin.com/apis for availible calls.
-     * @param type $method POST|GET|PUT|DELETE
-     * @param type $resource Resource to make a call to. (eg. v1/people/~/connections)
-     * @param type $body POST body data (Will be send as is if string is supplied, json_encoded if object or assoc array.)
-     * @return type response object. Throws Exception on error.
+     * @param $uri
+     * @param array $parameters
+     * @param array $headers
+     * @return mixed
      */
-    public function request($uri, $method='GET', $parameters=array())
+    public function get($uri, $parameters=array(), $headers=array())
+    {
+        $headers = array_merge(array(
+            "Content-type: ".$this->getContentTypeFormat(),
+            "x-li-format: ".self::DEFAULT_FORMAT
+        ), $headers);
+        return $this->request($uri, 'GET', $parameters, $headers);
+    }
+
+    /**
+     * Use this function to make calls to the LinkedIn OAuth2 API.
+     *
+     * @see https://developer.linkedin.com/apis for availible calls.
+     *
+     * @param string $uri
+     * @param string $method
+     * @param array $parameters
+     * @param array $headers
+     * @param null $rawencoding
+     * @return mixed
+     */
+    public function request($uri, $method='GET', $parameters=array(), $headers=array(), $rawencoding=null)
     {
         // Query parameters needed to make a basic OAuth transaction
-        $params = array(
-            'format' => self::DEFAULT_FORMAT,
-        );
+        $params = array();
 
         // Set the oauth token if we have one
         if (null !== $this->getCurrentOAuthToken()) {
             $params['oauth2_access_token'] = $this->getCurrentOAuthToken();
         }
 
-        $parameters = array_merge($params, $parameters);
         $url = $uri;
 
         if (!preg_match('#^http#i', $uri)) {
@@ -104,10 +118,17 @@ class LinkedInOAuth extends AbstractOAuthClient
 
         // build the http query
         if ('GET' === strtoupper(trim($method))) {
+            $parameters = array_merge($params, $parameters);
             $url .= '?' . http_build_query($parameters);
-            $response = $this->http($url, 'GET');
+            $response = $this->http($url, 'GET', array(), $headers);
         } else {
-            $response = $this->http($url, $method, $parameters);
+
+            $url .= '?' . http_build_query($params);
+            if ('json' == $rawencoding) {
+                $parameters = json_encode($parameters);
+            }
+
+            $response = $this->http($url, $method, $parameters, $headers);
         }
 
         if ('json' == self::DEFAULT_FORMAT) {
@@ -123,10 +144,20 @@ class LinkedInOAuth extends AbstractOAuthClient
      *
      * @param $data
      * @return bool|void
-     * @throws \Exception
+     * @throws LinkedInException
+     *
+     * @see https://developer.linkedin.com/documents/share-api#usage
      */
     public function publish($data)
     {
-        return false;
+        if (!is_array($data)) {
+            throw new LinkedInException('Content information must be stored in an array. Cannot publish update');
+        }
+
+        return $this->post('people/~/shares', $data, array(
+            "Except:",
+            "Content-type: ".$this->getContentTypeFormat(),
+            "x-li-format: ".self::DEFAULT_FORMAT
+        ), 'json');
     }
 }
